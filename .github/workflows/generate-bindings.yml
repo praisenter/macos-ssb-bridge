@@ -1,0 +1,262 @@
+name: Generate FFM Bindings
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: generate-ffm-bindings
+  cancel-in-progress: false
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+  GENERATED: src/main/java/org/praisenter/macos/ssb/internal/generated
+
+jobs:
+  generate:
+    name: Generate (ARM64)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: zulu
+          java-version: '22'
+          cache: maven
+      - name: Verify native architecture and SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          xcrun --sdk macosx --show-sdk-path
+      - name: Install jextract 22
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="openjdk-22-jextract+6-47_macos-aarch64_bin.tar.gz"
+          url="https://download.java.net/java/early_access/jextract/22/6/$archive"
+          install="$RUNNER_TEMP/jextract"
+          mkdir -p "$install"
+          cd "$install"
+          curl --fail --location --retry 3 --output "$archive" "$url"
+          curl --fail --location --retry 3 --output archive.sha256 "$url.sha256"
+          expected="$(awk '{print $1}' archive.sha256)"
+          actual="$(shasum -a 256 "$archive" | awk '{print $1}')"
+          test "${#expected}" -eq 64
+          test "$actual" = "$expected"
+          tar -xzf "$archive"
+          tool="$(find "$install" -type f -path '*/bin/jextract' -print)"
+          test -n "$tool"
+          test "$(printf '%s\n' "$tool" | wc -l | tr -d ' ')" -eq 1
+          test -x "$tool"
+          echo "JEXTRACT=$tool" >> "$GITHUB_ENV"
+          echo "JEXTRACT_ARCHIVE_SHA256=$actual" >> "$GITHUB_ENV"
+          "$tool" --version
+      - name: Generate unmodified bindings
+        shell: bash
+        run: bash scripts/generate-ffm.sh --jextract "$JEXTRACT"
+      - name: Stage bindings and generation metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bindings/sources"
+          cp "$GENERATED/"*.java "$RUNNER_TEMP/bindings/sources/"
+          python3 - <<'PY'
+          import json
+          import os
+          import platform
+          import subprocess
+          from pathlib import Path
+
+          def output(*command):
+              return subprocess.check_output(command, stderr=subprocess.STDOUT, text=True).strip()
+
+          metadata = {
+              "architecture": platform.machine(),
+              "generator": output(os.environ["JEXTRACT"], "--version"),
+              "generatorArchiveSha256": os.environ["JEXTRACT_ARCHIVE_SHA256"],
+              "sdkVersion": output("xcrun", "--sdk", "macosx", "--show-sdk-version"),
+              "xcode": output("xcodebuild", "-version"),
+              "sourceCommit": os.environ["GITHUB_SHA"],
+          }
+          path = Path(os.environ["RUNNER_TEMP"]) / "bindings" / "metadata.json"
+          path.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+          PY
+      - name: Upload generated bindings
+        uses: actions/upload-artifact@v4
+        with:
+          name: bindings-arm64
+          path: ${{ runner.temp }}/bindings/
+          if-no-files-found: error
+          retention-days: 14
+
+  test-bindings:
+    name: Test ARM-Generated Bindings (${{ matrix.architecture }})
+    needs: generate
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            architecture: arm64
+          - runner: macos-15-intel
+            architecture: x86_64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: zulu
+          java-version: '22'
+          cache: maven
+      - name: Verify native architecture
+        shell: bash
+        env:
+          EXPECTED_ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "$EXPECTED_ARCHITECTURE"
+          java -version
+      - name: Download ARM-generated bindings
+        uses: actions/download-artifact@v4
+        with:
+          name: bindings-arm64
+          path: ${{ runner.temp }}/bindings
+      - name: Replace checked-in bindings with generated artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f "$RUNNER_TEMP/bindings/sources/CoreFoundationBindings.java"
+          mkdir -p "$GENERATED"
+          rm -f "$GENERATED/"*.java
+          cp "$RUNNER_TEMP/bindings/sources/"*.java "$GENERATED/"
+      - name: Run generated-binding JUnit tests
+        run: mvn -B -ntp clean test -Dtest=CoreFoundationTest
+      - name: Upload JUnit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: binding-test-reports-${{ matrix.architecture }}
+          path: target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  propose-update:
+    name: Propose Tested Bindings Update
+    needs: [generate, test-bindings]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out generation base
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Ensure base did not change during generation
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA" || {
+            echo 'Base branch changed during generation; rerun the workflow.' >&2
+            exit 1
+          }
+      - name: Download ARM-generated bindings
+        uses: actions/download-artifact@v4
+        with:
+          name: bindings-arm64
+          path: ${{ runner.temp }}/bindings
+      - name: Apply tested bindings and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import shutil
+          from pathlib import Path
+
+            root = Path(os.environ["RUNNER_TEMP"]) / "bindings"
+            arm = json.loads((root / "metadata.json").read_text())
+            if arm["architecture"] != "arm64" or arm["sourceCommit"] != os.environ["GITHUB_SHA"]:
+              raise SystemExit("Unexpected generation architecture or source commit")
+            source = root / "sources"
+          files = sorted(source.glob("*.java"))
+          if not files or any(not item.is_file() or item.suffix != ".java" for item in source.iterdir()):
+              raise SystemExit("Unexpected generated artifact contents")
+          destination = Path(os.environ["GENERATED"])
+          destination.mkdir(parents=True, exist_ok=True)
+          for previous in destination.glob("*.java"):
+              previous.unlink()
+          for file in files:
+              shutil.copyfile(file, destination / file.name)
+          provenance = {
+              "generator": arm["generator"],
+              "host": "macOS Apple Silicon GitHub-hosted runner",
+              "sdk": arm["sdkVersion"],
+              "xcode": arm["xcode"],
+                "generatorArchiveSha256": arm["generatorArchiveSha256"],
+                "generationArchitecture": "arm64",
+                "testedArchitectures": ["arm64", "x86_64"],
+              "postProcessing": False,
+              "output": {
+                  "javaFiles": len(files),
+                  "lines": sum(len(file.read_bytes().splitlines()) for file in files),
+                  "sourceBytes": sum(file.stat().st_size for file in files),
+              },
+              "regenerationWorkflow": {"script": "scripts/generate-ffm.sh", "workflow": ".github/workflows/generate-bindings.yml"},
+              "nativeValidation": "CoreFoundationTest passed with the same ARM-generated bindings on ARM64 and Intel; sandboxed relaunch validation remains separate",
+          }
+          Path("scripts/generation.json").write_text(json.dumps(provenance, indent=2) + "\n", encoding="utf-8")
+          PY
+      - name: Create or update bindings pull request
+        id: pr
+        uses: peter-evans/create-pull-request@v8
+        with:
+          token: ${{ secrets.BINDINGS_PR_TOKEN || github.token }}
+          base: ${{ github.ref_name }}
+          branch: automation/ffm-bindings-${{ github.ref_name }}
+          delete-branch: true
+          add-paths: |
+            src/main/java/org/praisenter/macos/ssb/internal/generated/*.java
+            scripts/generation.json
+          commit-message: Regenerate Core Foundation FFM bindings on macOS
+          title: Regenerate Core Foundation FFM bindings
+          body: |
+            Generated once with native jextract 22 on macOS Apple Silicon.
+
+            - The same generated artifact was tested on ARM64 and Intel macOS runners.
+            - `mvn clean test -Dtest=CoreFoundationTest` passed on both runners.
+            - Updates generated classes and generation provenance only; no ABI post-processing.
+            - Sandboxed app relaunch validation is still required separately.
+
+            With the default GITHUB_TOKEN, this PR does not automatically trigger other workflows.
+            Configure BINDINGS_PR_TOKEN with a GitHub App token or appropriately scoped PAT to trigger PR CI.
+      - name: Report pull request
+        if: steps.pr.outputs.pull-request-url != ''
+        env:
+          PR_URL: ${{ steps.pr.outputs.pull-request-url }}
+        run: |
+          echo "Bindings update PR: $PR_URL" >> "$GITHUB_STEP_SUMMARY"

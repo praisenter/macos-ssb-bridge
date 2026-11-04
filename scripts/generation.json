@@ -1,0 +1,28 @@
+{
+  "generator": "OpenJDK jextract 25, openjdk-25-jextract+2-4_windows-x64_bin",
+  "generatorRuntime": "25+37-3491",
+  "libclang": "13.0.0",
+  "host": "Windows x64",
+  "sdk": "macOS 11.3",
+  "sdkSource": "https://github.com/phracker/MacOSX-SDKs/releases/download/11.3/MacOSX11.3.sdk.tar.xz",
+  "sdkSourceCommit": "041600eda65c6a668f66cb7d56b7d1da3e8bcc93",
+  "sdkArchiveSha256": "cd4f08a75577145b8f05245a2975f7c81401d75e9535dcffbb879ee1deefcbf4",
+  "targets": ["arm64-apple-macos11.0", "x86_64-apple-macos11.0"],
+  "normalization": [
+    "Validate descriptors, scalar carriers, constants and native lookup names for the explicit allowlist",
+    "Widen C long layouts, Java parameters, return types and invokeExact return casts to macOS LP64",
+    "Widen CFURLPathStyle and bookmark option constants; retain UInt32 and Boolean carriers",
+    "Remove the unused Windows C_LONG_DOUBLE helper",
+    "Use SymbolLookup.find(...).orElseThrow(...) for Java 22 compatibility"
+  ],
+  "output": {"javaFiles": 2, "lines": 1170, "sourceBytes": 42592, "appleTargetsIdentical": true},
+  "regenerationWorkflow": {
+    "script": "scripts/generate-ffm.sh",
+    "generator": "OpenJDK jextract 22-jextract+6-47 for macOS",
+    "sdk": "Active SDK discovered by xcrun, or explicit --sdk",
+    "target": "Native host architecture",
+    "postProcessing": false,
+    "status": "Not yet run on macOS; fields above describe the existing Windows-generated artifacts"
+  },
+  "nativeValidation": "Not yet run on macOS"
+}

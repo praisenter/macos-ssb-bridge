@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.praisenter</groupId>
+  <artifactId>macos-ssb-bridge</artifactId>
+  <version>0.1.0</version>
+  <name>macOS Security Scoped Bookmarks</name>
+  <description>Java 22 FFM access to macOS security scoped bookmarks.</description>
+  <url>https://github.com/praisenter/macos-ssb-bridge</url>
+  <licenses>
+    <license><name>BSD 3-Clause License</name><url>https://opensource.org/license/bsd-3-clause</url><distribution>repo</distribution></license>
+  </licenses>
+  <developers>
+    <developer><id>wnbittle</id><name>William Bittle</name><organization>Praisenter</organization></developer>
+  </developers>
+  <scm>
+    <connection>scm:git:https://github.com/praisenter/macos-ssb-bridge.git</connection>
+    <developerConnection>scm:git:ssh://git@github.com/praisenter/macos-ssb-bridge.git</developerConnection>
+    <url>https://github.com/praisenter/macos-ssb-bridge</url>
+    <tag>HEAD</tag>
+  </scm>
+  <properties>
+    <maven.compiler.release>22</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <project.build.outputTimestamp>2026-11-01T00:00:00Z</project.build.outputTimestamp>
+    <junit.version>5.11.4</junit.version>
+  </properties>
+  <dependencies>
+    <dependency><groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId><version>${junit.version}</version><scope>test</scope></dependency>
+  </dependencies>
+  <build>
+    <resources>
+      <resource><directory>src/main/resources</directory></resource>
+      <resource><directory>${project.basedir}</directory><targetPath>META-INF</targetPath><includes><include>LICENSE</include></includes></resource>
+      <resource><directory>scripts</directory><targetPath>META-INF/ssb</targetPath><includes><include>generation.json</include></includes></resource>
+    </resources>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-enforcer-plugin</artifactId><version>3.5.0</version>
+        <executions><execution><id>prerequisites</id><goals><goal>enforce</goal></goals>
+          <configuration><rules>
+            <requireJavaVersion><version>[22,)</version></requireJavaVersion>
+            <requireMavenVersion><version>[3.9,)</version></requireMavenVersion>
+          </rules></configuration>
+        </execution></executions>
+      </plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-clean-plugin</artifactId><version>3.2.0</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-resources-plugin</artifactId><version>3.3.1</version></plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.14.1</version></plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.4</version>
+        <configuration><argLine>--enable-native-access=ALL-UNNAMED</argLine><useModulePath>false</useModulePath></configuration>
+      </plugin>
+      <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.4.1</version></plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-source-plugin</artifactId><version>3.3.1</version>
+        <executions><execution><id>sources</id><goals><goal>jar-no-fork</goal></goals></execution></executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId><artifactId>maven-javadoc-plugin</artifactId><version>3.11.2</version>
+        <configuration><notimestamp>true</notimestamp><excludePackageNames>org.praisenter.macos.ssb.internal:org.praisenter.macos.ssb.internal.*</excludePackageNames></configuration>
+        <executions><execution><id>javadoc</id><goals><goal>jar</goal></goals></execution></executions>
+      </plugin>
+    </plugins>
+  </build>
+  <profiles>
+    <profile>
+      <id>release</id>
+      <build><plugins>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId><artifactId>maven-gpg-plugin</artifactId><version>3.2.8</version>
+          <configuration><passphraseEnvName>GPG_PASSPHRASE</passphraseEnvName><gpgArguments><arg>--pinentry-mode</arg><arg>loopback</arg></gpgArguments></configuration>
+          <executions><execution><id>sign-artifacts</id><phase>verify</phase><goals><goal>sign</goal></goals></execution></executions>
+        </plugin>
+        <plugin>
+          <groupId>org.sonatype.central</groupId><artifactId>central-publishing-maven-plugin</artifactId><version>0.12.0</version><extensions>true</extensions>
+          <configuration><publishingServerId>central</publishingServerId><autoPublish>true</autoPublish><waitUntil>published</waitUntil></configuration>
+        </plugin>
+      </plugins></build>
+    </profile>
+  </profiles>
+</project>
