@@ -97,11 +97,15 @@ else
     if [ -d "$destination" ]; then
         for existing in "$destination"/*; do
             [ -e "$existing" ] || continue
-            [ -f "$existing" ] && [ -f "$generated/$(basename "$existing")" ] ||
+            [ -f "$existing" ] && [ "${existing##*.}" = java ] ||
                 fail "Unexpected existing file; refusing to overwrite: $existing"
         done
     fi
     mkdir -p "$destination"
+    for existing in "$destination"/*.java; do
+        [ -e "$existing" ] || continue
+        [ -f "$generated/$(basename "$existing")" ] || rm "$existing"
+    done
     cp "$generated"/*.java "$destination/"
 fi
 printf 'Generated and compiled unmodified macOS bindings (%s).\n' "$architecture"
