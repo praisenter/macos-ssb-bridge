@@ -198,11 +198,11 @@ jobs:
           import shutil
           from pathlib import Path
 
-            root = Path(os.environ["RUNNER_TEMP"]) / "bindings"
-            arm = json.loads((root / "metadata.json").read_text())
-            if arm["architecture"] != "arm64" or arm["sourceCommit"] != os.environ["GITHUB_SHA"]:
+          root = Path(os.environ["RUNNER_TEMP"]) / "bindings"
+          arm = json.loads((root / "metadata.json").read_text())
+          if arm["architecture"] != "arm64" or arm["sourceCommit"] != os.environ["GITHUB_SHA"]:
               raise SystemExit("Unexpected generation architecture or source commit")
-            source = root / "sources"
+          source = root / "sources"
           files = sorted(source.glob("*.java"))
           if not files or any(not item.is_file() or item.suffix != ".java" for item in source.iterdir()):
               raise SystemExit("Unexpected generated artifact contents")
@@ -217,9 +217,9 @@ jobs:
               "host": "macOS Apple Silicon GitHub-hosted runner",
               "sdk": arm["sdkVersion"],
               "xcode": arm["xcode"],
-                "generatorArchiveSha256": arm["generatorArchiveSha256"],
-                "generationArchitecture": "arm64",
-                "testedArchitectures": ["arm64", "x86_64"],
+              "generatorArchiveSha256": arm["generatorArchiveSha256"],
+              "generationArchitecture": "arm64",
+              "testedArchitectures": ["arm64", "x86_64"],
               "postProcessing": False,
               "output": {
                   "javaFiles": len(files),
