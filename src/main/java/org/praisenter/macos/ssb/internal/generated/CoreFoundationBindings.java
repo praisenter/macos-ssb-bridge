@@ -12,25 +12,70 @@ import java.util.stream.*;
 import static java.lang.foreign.ValueLayout.*;
 import static java.lang.foreign.MemoryLayout.PathElement.*;
 
-public class CoreFoundationBindings extends CoreFoundationBindings$shared {
+public class CoreFoundationBindings {
 
     CoreFoundationBindings() {
         // Should not be called directly
     }
 
     static final Arena LIBRARY_ARENA = Arena.ofAuto();
+    static final boolean TRACE_DOWNCALLS = Boolean.getBoolean("jextract.trace.downcalls");
+
+    static void traceDowncall(String name, Object... args) {
+         String traceArgs = Arrays.stream(args)
+                       .map(Object::toString)
+                       .collect(Collectors.joining(", "));
+         System.out.printf("%s(%s)\n", name, traceArgs);
+    }
+
+    static MemorySegment findOrThrow(String symbol) {
+        return SYMBOL_LOOKUP.find(symbol)
+            .orElseThrow(() -> new UnsatisfiedLinkError("unresolved symbol: " + symbol));
+    }
+
+    static MethodHandle upcallHandle(Class<?> fi, String name, FunctionDescriptor fdesc) {
+        try {
+            return MethodHandles.lookup().findVirtual(fi, name, fdesc.toMethodType());
+        } catch (ReflectiveOperationException ex) {
+            throw new AssertionError(ex);
+        }
+    }
+
+    static MemoryLayout align(MemoryLayout layout, long align) {
+        return switch (layout) {
+            case PaddingLayout p -> p;
+            case ValueLayout v -> v.withByteAlignment(align);
+            case GroupLayout g -> {
+                MemoryLayout[] alignedMembers = g.memberLayouts().stream()
+                        .map(m -> align(m, align)).toArray(MemoryLayout[]::new);
+                yield g instanceof StructLayout ?
+                        MemoryLayout.structLayout(alignedMembers) : MemoryLayout.unionLayout(alignedMembers);
+            }
+            case SequenceLayout s -> MemoryLayout.sequenceLayout(s.elementCount(), align(s.elementLayout(), align));
+        };
+    }
 
     static final SymbolLookup SYMBOL_LOOKUP = SymbolLookup.libraryLookup("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", LIBRARY_ARENA)
             .or(SymbolLookup.loaderLookup())
             .or(Linker.nativeLinker().defaultLookup());
 
+    public static final ValueLayout.OfBoolean C_BOOL = ValueLayout.JAVA_BOOLEAN;
+    public static final ValueLayout.OfByte C_CHAR = ValueLayout.JAVA_BYTE;
+    public static final ValueLayout.OfShort C_SHORT = ValueLayout.JAVA_SHORT;
+    public static final ValueLayout.OfInt C_INT = ValueLayout.JAVA_INT;
+    public static final ValueLayout.OfLong C_LONG_LONG = ValueLayout.JAVA_LONG;
+    public static final ValueLayout.OfFloat C_FLOAT = ValueLayout.JAVA_FLOAT;
+    public static final ValueLayout.OfDouble C_DOUBLE = ValueLayout.JAVA_DOUBLE;
+    public static final AddressLayout C_POINTER = ValueLayout.ADDRESS
+            .withTargetLayout(MemoryLayout.sequenceLayout(java.lang.Long.MAX_VALUE, JAVA_BYTE));
+    public static final ValueLayout.OfLong C_LONG = ValueLayout.JAVA_LONG;
 
     private static class CFRelease {
         public static final FunctionDescriptor DESC = FunctionDescriptor.ofVoid(
             CoreFoundationBindings.C_POINTER
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFRelease").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFRelease"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFRelease");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -77,8 +122,6 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFRelease", cf);
             }
             mh$.invokeExact(cf);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
@@ -92,7 +135,7 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
             CoreFoundationBindings.C_LONG
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFDataCreate").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFDataCreate"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFDataCreate");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -139,8 +182,6 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFDataCreate", allocator, bytes, length);
             }
             return (MemorySegment)mh$.invokeExact(allocator, bytes, length);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
@@ -152,7 +193,7 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
             CoreFoundationBindings.C_POINTER
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFDataGetLength").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFDataGetLength"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFDataGetLength");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -199,8 +240,6 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFDataGetLength", theData);
             }
             return (long)mh$.invokeExact(theData);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
@@ -212,7 +251,7 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
             CoreFoundationBindings.C_POINTER
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFDataGetBytePtr").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFDataGetBytePtr"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFDataGetBytePtr");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -259,265 +298,6 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFDataGetBytePtr", theData);
             }
             return (MemorySegment)mh$.invokeExact(theData);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
-        } catch (Throwable ex$) {
-           throw new AssertionError("should not reach here", ex$);
-        }
-    }
-    private static final int kCFStringEncodingUTF8 = (int)134217984L;
-    /**
-     * {@snippet lang=c :
-     * enum <anonymous>.kCFStringEncodingUTF8 = 134217984
-     * }
-     */
-    public static int kCFStringEncodingUTF8() {
-        return kCFStringEncodingUTF8;
-    }
-
-    private static class CFStringCreateWithBytes {
-        public static final FunctionDescriptor DESC = FunctionDescriptor.of(
-            CoreFoundationBindings.C_POINTER,
-            CoreFoundationBindings.C_POINTER,
-            CoreFoundationBindings.C_POINTER,
-            CoreFoundationBindings.C_LONG,
-            CoreFoundationBindings.C_INT,
-            CoreFoundationBindings.C_CHAR
-        );
-
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFStringCreateWithBytes").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFStringCreateWithBytes"));
-
-        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
-    }
-
-    /**
-     * Function descriptor for:
-     * {@snippet lang=c :
-     * extern CFStringRef CFStringCreateWithBytes(CFAllocatorRef alloc, const UInt8 *bytes, CFIndex numBytes, CFStringEncoding encoding, Boolean isExternalRepresentation)
-     * }
-     */
-    public static FunctionDescriptor CFStringCreateWithBytes$descriptor() {
-        return CFStringCreateWithBytes.DESC;
-    }
-
-    /**
-     * Downcall method handle for:
-     * {@snippet lang=c :
-     * extern CFStringRef CFStringCreateWithBytes(CFAllocatorRef alloc, const UInt8 *bytes, CFIndex numBytes, CFStringEncoding encoding, Boolean isExternalRepresentation)
-     * }
-     */
-    public static MethodHandle CFStringCreateWithBytes$handle() {
-        return CFStringCreateWithBytes.HANDLE;
-    }
-
-    /**
-     * Address for:
-     * {@snippet lang=c :
-     * extern CFStringRef CFStringCreateWithBytes(CFAllocatorRef alloc, const UInt8 *bytes, CFIndex numBytes, CFStringEncoding encoding, Boolean isExternalRepresentation)
-     * }
-     */
-    public static MemorySegment CFStringCreateWithBytes$address() {
-        return CFStringCreateWithBytes.ADDR;
-    }
-
-    /**
-     * {@snippet lang=c :
-     * extern CFStringRef CFStringCreateWithBytes(CFAllocatorRef alloc, const UInt8 *bytes, CFIndex numBytes, CFStringEncoding encoding, Boolean isExternalRepresentation)
-     * }
-     */
-    public static MemorySegment CFStringCreateWithBytes(MemorySegment alloc, MemorySegment bytes, long numBytes, int encoding, byte isExternalRepresentation) {
-        var mh$ = CFStringCreateWithBytes.HANDLE;
-        try {
-            if (TRACE_DOWNCALLS) {
-                traceDowncall("CFStringCreateWithBytes", alloc, bytes, numBytes, encoding, isExternalRepresentation);
-            }
-            return (MemorySegment)mh$.invokeExact(alloc, bytes, numBytes, encoding, isExternalRepresentation);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
-        } catch (Throwable ex$) {
-           throw new AssertionError("should not reach here", ex$);
-        }
-    }
-
-    private static class CFStringGetLength {
-        public static final FunctionDescriptor DESC = FunctionDescriptor.of(
-            CoreFoundationBindings.C_LONG,
-            CoreFoundationBindings.C_POINTER
-        );
-
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFStringGetLength").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFStringGetLength"));
-
-        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
-    }
-
-    /**
-     * Function descriptor for:
-     * {@snippet lang=c :
-     * extern CFIndex CFStringGetLength(CFStringRef theString)
-     * }
-     */
-    public static FunctionDescriptor CFStringGetLength$descriptor() {
-        return CFStringGetLength.DESC;
-    }
-
-    /**
-     * Downcall method handle for:
-     * {@snippet lang=c :
-     * extern CFIndex CFStringGetLength(CFStringRef theString)
-     * }
-     */
-    public static MethodHandle CFStringGetLength$handle() {
-        return CFStringGetLength.HANDLE;
-    }
-
-    /**
-     * Address for:
-     * {@snippet lang=c :
-     * extern CFIndex CFStringGetLength(CFStringRef theString)
-     * }
-     */
-    public static MemorySegment CFStringGetLength$address() {
-        return CFStringGetLength.ADDR;
-    }
-
-    /**
-     * {@snippet lang=c :
-     * extern CFIndex CFStringGetLength(CFStringRef theString)
-     * }
-     */
-    public static long CFStringGetLength(MemorySegment theString) {
-        var mh$ = CFStringGetLength.HANDLE;
-        try {
-            if (TRACE_DOWNCALLS) {
-                traceDowncall("CFStringGetLength", theString);
-            }
-            return (long)mh$.invokeExact(theString);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
-        } catch (Throwable ex$) {
-           throw new AssertionError("should not reach here", ex$);
-        }
-    }
-
-    private static class CFStringGetCString {
-        public static final FunctionDescriptor DESC = FunctionDescriptor.of(
-            CoreFoundationBindings.C_CHAR,
-            CoreFoundationBindings.C_POINTER,
-            CoreFoundationBindings.C_POINTER,
-            CoreFoundationBindings.C_LONG,
-            CoreFoundationBindings.C_INT
-        );
-
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFStringGetCString").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFStringGetCString"));
-
-        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
-    }
-
-    /**
-     * Function descriptor for:
-     * {@snippet lang=c :
-     * extern Boolean CFStringGetCString(CFStringRef theString, char *buffer, CFIndex bufferSize, CFStringEncoding encoding)
-     * }
-     */
-    public static FunctionDescriptor CFStringGetCString$descriptor() {
-        return CFStringGetCString.DESC;
-    }
-
-    /**
-     * Downcall method handle for:
-     * {@snippet lang=c :
-     * extern Boolean CFStringGetCString(CFStringRef theString, char *buffer, CFIndex bufferSize, CFStringEncoding encoding)
-     * }
-     */
-    public static MethodHandle CFStringGetCString$handle() {
-        return CFStringGetCString.HANDLE;
-    }
-
-    /**
-     * Address for:
-     * {@snippet lang=c :
-     * extern Boolean CFStringGetCString(CFStringRef theString, char *buffer, CFIndex bufferSize, CFStringEncoding encoding)
-     * }
-     */
-    public static MemorySegment CFStringGetCString$address() {
-        return CFStringGetCString.ADDR;
-    }
-
-    /**
-     * {@snippet lang=c :
-     * extern Boolean CFStringGetCString(CFStringRef theString, char *buffer, CFIndex bufferSize, CFStringEncoding encoding)
-     * }
-     */
-    public static byte CFStringGetCString(MemorySegment theString, MemorySegment buffer, long bufferSize, int encoding) {
-        var mh$ = CFStringGetCString.HANDLE;
-        try {
-            if (TRACE_DOWNCALLS) {
-                traceDowncall("CFStringGetCString", theString, buffer, bufferSize, encoding);
-            }
-            return (byte)mh$.invokeExact(theString, buffer, bufferSize, encoding);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
-        } catch (Throwable ex$) {
-           throw new AssertionError("should not reach here", ex$);
-        }
-    }
-
-    private static class CFStringGetMaximumSizeForEncoding {
-        public static final FunctionDescriptor DESC = FunctionDescriptor.of(
-            CoreFoundationBindings.C_LONG,
-            CoreFoundationBindings.C_LONG,
-            CoreFoundationBindings.C_INT
-        );
-
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFStringGetMaximumSizeForEncoding").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFStringGetMaximumSizeForEncoding"));
-
-        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
-    }
-
-    /**
-     * Function descriptor for:
-     * {@snippet lang=c :
-     * extern CFIndex CFStringGetMaximumSizeForEncoding(CFIndex length, CFStringEncoding encoding)
-     * }
-     */
-    public static FunctionDescriptor CFStringGetMaximumSizeForEncoding$descriptor() {
-        return CFStringGetMaximumSizeForEncoding.DESC;
-    }
-
-    /**
-     * Downcall method handle for:
-     * {@snippet lang=c :
-     * extern CFIndex CFStringGetMaximumSizeForEncoding(CFIndex length, CFStringEncoding encoding)
-     * }
-     */
-    public static MethodHandle CFStringGetMaximumSizeForEncoding$handle() {
-        return CFStringGetMaximumSizeForEncoding.HANDLE;
-    }
-
-    /**
-     * Address for:
-     * {@snippet lang=c :
-     * extern CFIndex CFStringGetMaximumSizeForEncoding(CFIndex length, CFStringEncoding encoding)
-     * }
-     */
-    public static MemorySegment CFStringGetMaximumSizeForEncoding$address() {
-        return CFStringGetMaximumSizeForEncoding.ADDR;
-    }
-
-    /**
-     * {@snippet lang=c :
-     * extern CFIndex CFStringGetMaximumSizeForEncoding(CFIndex length, CFStringEncoding encoding)
-     * }
-     */
-    public static long CFStringGetMaximumSizeForEncoding(long length, int encoding) {
-        var mh$ = CFStringGetMaximumSizeForEncoding.HANDLE;
-        try {
-            if (TRACE_DOWNCALLS) {
-                traceDowncall("CFStringGetMaximumSizeForEncoding", length, encoding);
-            }
-            return (long)mh$.invokeExact(length, encoding);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
@@ -529,7 +309,7 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
             CoreFoundationBindings.C_POINTER
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFErrorGetDomain").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFErrorGetDomain"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFErrorGetDomain");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -576,8 +356,6 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFErrorGetDomain", err);
             }
             return (MemorySegment)mh$.invokeExact(err);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
@@ -589,7 +367,7 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
             CoreFoundationBindings.C_POINTER
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFErrorGetCode").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFErrorGetCode"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFErrorGetCode");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -636,8 +414,6 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFErrorGetCode", err);
             }
             return (long)mh$.invokeExact(err);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
@@ -649,7 +425,7 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
             CoreFoundationBindings.C_POINTER
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFErrorCopyDescription").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFErrorCopyDescription"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFErrorCopyDescription");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -696,19 +472,266 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFErrorCopyDescription", err);
             }
             return (MemorySegment)mh$.invokeExact(err);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
     }
-    private static final long kCFURLPOSIXPathStyle = 0L;
+    private static final int kCFStringEncodingUTF8 = (int)134217984L;
+    /**
+     * {@snippet lang=c :
+     * enum <anonymous>.kCFStringEncodingUTF8 = 134217984
+     * }
+     */
+    public static int kCFStringEncodingUTF8() {
+        return kCFStringEncodingUTF8;
+    }
+
+    private static class CFStringCreateWithBytes {
+        public static final FunctionDescriptor DESC = FunctionDescriptor.of(
+            CoreFoundationBindings.C_POINTER,
+            CoreFoundationBindings.C_POINTER,
+            CoreFoundationBindings.C_POINTER,
+            CoreFoundationBindings.C_LONG,
+            CoreFoundationBindings.C_INT,
+            CoreFoundationBindings.C_CHAR
+        );
+
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFStringCreateWithBytes");
+
+        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
+    }
+
+    /**
+     * Function descriptor for:
+     * {@snippet lang=c :
+     * extern CFStringRef CFStringCreateWithBytes(CFAllocatorRef alloc, const UInt8 *bytes, CFIndex numBytes, CFStringEncoding encoding, Boolean isExternalRepresentation)
+     * }
+     */
+    public static FunctionDescriptor CFStringCreateWithBytes$descriptor() {
+        return CFStringCreateWithBytes.DESC;
+    }
+
+    /**
+     * Downcall method handle for:
+     * {@snippet lang=c :
+     * extern CFStringRef CFStringCreateWithBytes(CFAllocatorRef alloc, const UInt8 *bytes, CFIndex numBytes, CFStringEncoding encoding, Boolean isExternalRepresentation)
+     * }
+     */
+    public static MethodHandle CFStringCreateWithBytes$handle() {
+        return CFStringCreateWithBytes.HANDLE;
+    }
+
+    /**
+     * Address for:
+     * {@snippet lang=c :
+     * extern CFStringRef CFStringCreateWithBytes(CFAllocatorRef alloc, const UInt8 *bytes, CFIndex numBytes, CFStringEncoding encoding, Boolean isExternalRepresentation)
+     * }
+     */
+    public static MemorySegment CFStringCreateWithBytes$address() {
+        return CFStringCreateWithBytes.ADDR;
+    }
+
+    /**
+     * {@snippet lang=c :
+     * extern CFStringRef CFStringCreateWithBytes(CFAllocatorRef alloc, const UInt8 *bytes, CFIndex numBytes, CFStringEncoding encoding, Boolean isExternalRepresentation)
+     * }
+     */
+    public static MemorySegment CFStringCreateWithBytes(MemorySegment alloc, MemorySegment bytes, long numBytes, int encoding, byte isExternalRepresentation) {
+        var mh$ = CFStringCreateWithBytes.HANDLE;
+        try {
+            if (TRACE_DOWNCALLS) {
+                traceDowncall("CFStringCreateWithBytes", alloc, bytes, numBytes, encoding, isExternalRepresentation);
+            }
+            return (MemorySegment)mh$.invokeExact(alloc, bytes, numBytes, encoding, isExternalRepresentation);
+        } catch (Throwable ex$) {
+           throw new AssertionError("should not reach here", ex$);
+        }
+    }
+
+    private static class CFStringGetLength {
+        public static final FunctionDescriptor DESC = FunctionDescriptor.of(
+            CoreFoundationBindings.C_LONG,
+            CoreFoundationBindings.C_POINTER
+        );
+
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFStringGetLength");
+
+        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
+    }
+
+    /**
+     * Function descriptor for:
+     * {@snippet lang=c :
+     * extern CFIndex CFStringGetLength(CFStringRef theString)
+     * }
+     */
+    public static FunctionDescriptor CFStringGetLength$descriptor() {
+        return CFStringGetLength.DESC;
+    }
+
+    /**
+     * Downcall method handle for:
+     * {@snippet lang=c :
+     * extern CFIndex CFStringGetLength(CFStringRef theString)
+     * }
+     */
+    public static MethodHandle CFStringGetLength$handle() {
+        return CFStringGetLength.HANDLE;
+    }
+
+    /**
+     * Address for:
+     * {@snippet lang=c :
+     * extern CFIndex CFStringGetLength(CFStringRef theString)
+     * }
+     */
+    public static MemorySegment CFStringGetLength$address() {
+        return CFStringGetLength.ADDR;
+    }
+
+    /**
+     * {@snippet lang=c :
+     * extern CFIndex CFStringGetLength(CFStringRef theString)
+     * }
+     */
+    public static long CFStringGetLength(MemorySegment theString) {
+        var mh$ = CFStringGetLength.HANDLE;
+        try {
+            if (TRACE_DOWNCALLS) {
+                traceDowncall("CFStringGetLength", theString);
+            }
+            return (long)mh$.invokeExact(theString);
+        } catch (Throwable ex$) {
+           throw new AssertionError("should not reach here", ex$);
+        }
+    }
+
+    private static class CFStringGetCString {
+        public static final FunctionDescriptor DESC = FunctionDescriptor.of(
+            CoreFoundationBindings.C_CHAR,
+            CoreFoundationBindings.C_POINTER,
+            CoreFoundationBindings.C_POINTER,
+            CoreFoundationBindings.C_LONG,
+            CoreFoundationBindings.C_INT
+        );
+
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFStringGetCString");
+
+        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
+    }
+
+    /**
+     * Function descriptor for:
+     * {@snippet lang=c :
+     * extern Boolean CFStringGetCString(CFStringRef theString, char *buffer, CFIndex bufferSize, CFStringEncoding encoding)
+     * }
+     */
+    public static FunctionDescriptor CFStringGetCString$descriptor() {
+        return CFStringGetCString.DESC;
+    }
+
+    /**
+     * Downcall method handle for:
+     * {@snippet lang=c :
+     * extern Boolean CFStringGetCString(CFStringRef theString, char *buffer, CFIndex bufferSize, CFStringEncoding encoding)
+     * }
+     */
+    public static MethodHandle CFStringGetCString$handle() {
+        return CFStringGetCString.HANDLE;
+    }
+
+    /**
+     * Address for:
+     * {@snippet lang=c :
+     * extern Boolean CFStringGetCString(CFStringRef theString, char *buffer, CFIndex bufferSize, CFStringEncoding encoding)
+     * }
+     */
+    public static MemorySegment CFStringGetCString$address() {
+        return CFStringGetCString.ADDR;
+    }
+
+    /**
+     * {@snippet lang=c :
+     * extern Boolean CFStringGetCString(CFStringRef theString, char *buffer, CFIndex bufferSize, CFStringEncoding encoding)
+     * }
+     */
+    public static byte CFStringGetCString(MemorySegment theString, MemorySegment buffer, long bufferSize, int encoding) {
+        var mh$ = CFStringGetCString.HANDLE;
+        try {
+            if (TRACE_DOWNCALLS) {
+                traceDowncall("CFStringGetCString", theString, buffer, bufferSize, encoding);
+            }
+            return (byte)mh$.invokeExact(theString, buffer, bufferSize, encoding);
+        } catch (Throwable ex$) {
+           throw new AssertionError("should not reach here", ex$);
+        }
+    }
+
+    private static class CFStringGetMaximumSizeForEncoding {
+        public static final FunctionDescriptor DESC = FunctionDescriptor.of(
+            CoreFoundationBindings.C_LONG,
+            CoreFoundationBindings.C_LONG,
+            CoreFoundationBindings.C_INT
+        );
+
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFStringGetMaximumSizeForEncoding");
+
+        public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
+    }
+
+    /**
+     * Function descriptor for:
+     * {@snippet lang=c :
+     * extern CFIndex CFStringGetMaximumSizeForEncoding(CFIndex length, CFStringEncoding encoding)
+     * }
+     */
+    public static FunctionDescriptor CFStringGetMaximumSizeForEncoding$descriptor() {
+        return CFStringGetMaximumSizeForEncoding.DESC;
+    }
+
+    /**
+     * Downcall method handle for:
+     * {@snippet lang=c :
+     * extern CFIndex CFStringGetMaximumSizeForEncoding(CFIndex length, CFStringEncoding encoding)
+     * }
+     */
+    public static MethodHandle CFStringGetMaximumSizeForEncoding$handle() {
+        return CFStringGetMaximumSizeForEncoding.HANDLE;
+    }
+
+    /**
+     * Address for:
+     * {@snippet lang=c :
+     * extern CFIndex CFStringGetMaximumSizeForEncoding(CFIndex length, CFStringEncoding encoding)
+     * }
+     */
+    public static MemorySegment CFStringGetMaximumSizeForEncoding$address() {
+        return CFStringGetMaximumSizeForEncoding.ADDR;
+    }
+
+    /**
+     * {@snippet lang=c :
+     * extern CFIndex CFStringGetMaximumSizeForEncoding(CFIndex length, CFStringEncoding encoding)
+     * }
+     */
+    public static long CFStringGetMaximumSizeForEncoding(long length, int encoding) {
+        var mh$ = CFStringGetMaximumSizeForEncoding.HANDLE;
+        try {
+            if (TRACE_DOWNCALLS) {
+                traceDowncall("CFStringGetMaximumSizeForEncoding", length, encoding);
+            }
+            return (long)mh$.invokeExact(length, encoding);
+        } catch (Throwable ex$) {
+           throw new AssertionError("should not reach here", ex$);
+        }
+    }
+    private static final int kCFURLPOSIXPathStyle = (int)0L;
     /**
      * {@snippet lang=c :
      * enum <anonymous>.kCFURLPOSIXPathStyle = 0
      * }
      */
-    public static long kCFURLPOSIXPathStyle() {
+    public static int kCFURLPOSIXPathStyle() {
         return kCFURLPOSIXPathStyle;
     }
 
@@ -721,7 +744,7 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
             CoreFoundationBindings.C_CHAR
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFURLCreateWithFileSystemPath").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFURLCreateWithFileSystemPath"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFURLCreateWithFileSystemPath");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -768,8 +791,6 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFURLCreateWithFileSystemPath", allocator, filePath, pathStyle, isDirectory);
             }
             return (MemorySegment)mh$.invokeExact(allocator, filePath, pathStyle, isDirectory);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
@@ -781,7 +802,7 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
             CoreFoundationBindings.C_POINTER
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFURLGetString").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFURLGetString"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFURLGetString");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -828,28 +849,26 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFURLGetString", anURL);
             }
             return (MemorySegment)mh$.invokeExact(anURL);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
     }
-    private static final long kCFURLBookmarkCreationWithSecurityScope = 2048L;
+    private static final int kCFURLBookmarkCreationWithSecurityScope = (int)2048L;
     /**
      * {@snippet lang=c :
      * enum <anonymous>.kCFURLBookmarkCreationWithSecurityScope = 2048
      * }
      */
-    public static long kCFURLBookmarkCreationWithSecurityScope() {
+    public static int kCFURLBookmarkCreationWithSecurityScope() {
         return kCFURLBookmarkCreationWithSecurityScope;
     }
-    private static final long kCFURLBookmarkResolutionWithSecurityScope = 1024L;
+    private static final int kCFURLBookmarkResolutionWithSecurityScope = (int)1024L;
     /**
      * {@snippet lang=c :
      * enum <anonymous>.kCFURLBookmarkResolutionWithSecurityScope = 1024
      * }
      */
-    public static long kCFURLBookmarkResolutionWithSecurityScope() {
+    public static int kCFURLBookmarkResolutionWithSecurityScope() {
         return kCFURLBookmarkResolutionWithSecurityScope;
     }
 
@@ -864,7 +883,7 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
             CoreFoundationBindings.C_POINTER
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFURLCreateBookmarkData").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFURLCreateBookmarkData"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFURLCreateBookmarkData");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -911,8 +930,6 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFURLCreateBookmarkData", allocator, url, options, resourcePropertiesToInclude, relativeToURL, error);
             }
             return (MemorySegment)mh$.invokeExact(allocator, url, options, resourcePropertiesToInclude, relativeToURL, error);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
@@ -930,7 +947,7 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
             CoreFoundationBindings.C_POINTER
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFURLCreateByResolvingBookmarkData").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFURLCreateByResolvingBookmarkData"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFURLCreateByResolvingBookmarkData");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -977,8 +994,6 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFURLCreateByResolvingBookmarkData", allocator, bookmark, options, relativeToURL, resourcePropertiesToInclude, isStale, error);
             }
             return (MemorySegment)mh$.invokeExact(allocator, bookmark, options, relativeToURL, resourcePropertiesToInclude, isStale, error);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
@@ -990,7 +1005,7 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
             CoreFoundationBindings.C_POINTER
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFURLStartAccessingSecurityScopedResource").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFURLStartAccessingSecurityScopedResource"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFURLStartAccessingSecurityScopedResource");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -1037,8 +1052,6 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFURLStartAccessingSecurityScopedResource", url);
             }
             return (byte)mh$.invokeExact(url);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
@@ -1049,7 +1062,7 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
             CoreFoundationBindings.C_POINTER
         );
 
-        public static final MemorySegment ADDR = SYMBOL_LOOKUP.find("CFURLStopAccessingSecurityScopedResource").orElseThrow(() -> new UnsatisfiedLinkError("Missing Core Foundation symbol: CFURLStopAccessingSecurityScopedResource"));
+        public static final MemorySegment ADDR = CoreFoundationBindings.findOrThrow("CFURLStopAccessingSecurityScopedResource");
 
         public static final MethodHandle HANDLE = Linker.nativeLinker().downcallHandle(ADDR, DESC);
     }
@@ -1096,8 +1109,6 @@ public class CoreFoundationBindings extends CoreFoundationBindings$shared {
                 traceDowncall("CFURLStopAccessingSecurityScopedResource", url);
             }
             mh$.invokeExact(url);
-        } catch (Error | RuntimeException ex) {
-           throw ex;
         } catch (Throwable ex$) {
            throw new AssertionError("should not reach here", ex$);
         }
