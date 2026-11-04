@@ -53,7 +53,7 @@ fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/ssb-jextract.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 printf '%s\n' '#include <CoreFoundation/CFURL.h>' > "$work/bookmarks.h"
-printf '%s\n' '-isysroot' "$sdk" > "$work/compile_flags.txt"
+printf '%s\n' '-isysroot' "$sdk" '-F' "$frameworks" '-I' "$sdk/usr/include" > "$work/compile_flags.txt"
 package='org.praisenter.macos.ssb.internal.generated'
 package_path=${package//./\/}
 functions=(
@@ -72,7 +72,6 @@ arguments=(
     --output "$work/sources" --target-package "$package"
     --header-class-name CoreFoundationBindings
     --library ':/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation'
-    -F "$frameworks" -I "$sdk/usr/include"
 )
 for function in "${functions[@]}"; do arguments+=(--include-function "$function"); done
 for constant in "${constants[@]}"; do arguments+=(--include-constant "$constant"); done
